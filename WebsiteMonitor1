@@ -1,0 +1,167 @@
+import javafx.application.Platform;
+import javafx.embed.swing.JFXPanel;
+import javafx.scene.Scene;
+import javafx.scene.web.WebEngine;
+import javafx.scene.web.WebView;
+
+import javax.swing.*;
+import java.awt.*;
+import java.io.*;
+import java.util.ArrayList;
+import java.util.Scanner;
+
+public class WebsiteMonitor extends JFrame {
+    private JPanel mainPanel;
+    private JTextArea textEditor;
+    private ArrayList<JPanel> framePanels;
+    private ArrayList<Timer> timers;
+    private static final String CONFIG_FILE = "monitor_config.txt";
+
+    public WebsiteMonitor() {
+        setTitle("Website Monitor");
+        setSize(800, 600);
+        setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+        setLayout(new BorderLayout());
+
+        // Text editor at the top
+        textEditor = new JTextArea(5, 50);
+        textEditor.setLineWrap(true);
+        textEditor.setWrapStyleWord(true);
+        JScrollPane textEditorScrollPane = new JScrollPane(textEditor);
+        textEditorScrollPane.setBorder(BorderFactory.createTitledBorder("Text Editor (Paste URLs or Notes Here)"));
+        add(textEditorScrollPane, BorderLayout.NORTH);
+
+        // Main panel for displaying frames
+        mainPanel = new JPanel();
+        mainPanel.setLayout(new GridLayout(1, 1));
+        add(mainPanel, BorderLayout.CENTER);
+
+        framePanels = new ArrayList<>();
+        timers = new ArrayList<>();
+
+        // Add button to allow adding new frames
+        JButton addButton = new JButton("Add Frame");
+        addButton.addActionListener(e -> addWebFrame());
+        add(addButton, BorderLayout.SOUTH);
+
+        // Load previous session
+        loadSession();
+
+        // Save session on close
+        addWindowListener(new java.awt.event.WindowAdapter() {
+            @Override
+            public void windowClosing(java.awt.event.WindowEvent e) {
+                saveSession();
+            }
+        });
+
+        setVisible(true);
+    }
+
+    private void addWebFrame() {
+        String url = JOptionPane.showInputDialog(this, "Enter URL to monitor:");
+        if (url == null || url.isEmpty() || (!url.startsWith("http://") && !url.startsWith("https://"))) {
+            JOptionPane.showMessageDialog(this, "Invalid URL. Frame not added.");
+            return;
+        }
+
+        String intervalStr = JOptionPane.showInputDialog(this, "Enter refresh interval (in seconds):");
+        int refreshInterval;
+        try {
+            refreshInterval = Integer.parseInt(intervalStr) * 1000;
+            if (refreshInterval <= 0) throw new NumberFormatException();
+        } catch (NumberFormatException ex) {
+            JOptionPane.showMessageDialog(this, "Invalid interval. Frame not added.");
+            return;
+        }
+
+        createWebFrame(url, refreshInterval);
+    }
+
+    private void createWebFrame(String url, int refreshInterval) {
+        int rows = (int) Math.ceil(Math.sqrt(framePanels.size() + 1));
+        mainPanel.setLayout(new GridLayout(rows, rows));
+
+        JPanel framePanel = new JPanel(new BorderLayout());
+        JFXPanel fxPanel = new JFXPanel(); // JavaFX Panel
+        framePanel.add(fxPanel, BorderLayout.CENTER);
+
+        Platform.runLater(() -> {
+            WebView webView = new WebView();
+            WebEngine webEngine = webView.getEngine();
+            webEngine.setJavaScriptEnabled(true);
+            webEngine.load(url);
+
+            Scene scene = new Scene(webView);
+            fxPanel.setScene(scene);
+        });
+
+        JButton closeButton = new JButton("Close");
+        framePanel.add(closeButton, BorderLayout.SOUTH);
+
+        Timer timer = new Timer(refreshInterval, e -> Platform.runLater(() -> {
+            try {
+                WebView webView = (WebView) fxPanel.getScene().getRoot();
+                webView.getEngine().reload();
+            } catch (Exception ex) {
+                JOptionPane.showMessageDialog(this, "Error refreshing page: " + ex.getMessage());
+            }
+        }));
+        timer.start();
+
+        closeButton.addActionListener(e -> {
+            timer.stop();
+            mainPanel.remove(framePanel);
+            framePanels.remove(framePanel);
+            timers.remove(timer);
+
+            int newRows = (int) Math.ceil(Math.sqrt(framePanels.size()));
+            mainPanel.setLayout(new GridLayout(newRows, newRows));
+            mainPanel.revalidate();
+            mainPanel.repaint();
+        });
+
+        framePanels.add(framePanel);
+        timers.add(timer);
+        mainPanel.add(framePanel);
+
+        mainPanel.revalidate();
+        mainPanel.repaint();
+    }
+
+    private void saveSession() {
+        try (PrintWriter writer = new PrintWriter(new FileWriter(CONFIG_FILE))) {
+            for (int i = 0; i < framePanels.size(); i++) {
+                Timer timer = timers.get(i);
+                WebView webView = (WebView) ((JFXPanel) framePanels.get(i).getComponent(0)).getScene().getRoot();
+                String url = webView.getEngine().getLocation();
+                int interval = timer.getDelay() / 1000;
+                writer.println(url + "," + interval);
+            }
+        } catch (IOException e) {
+            JOptionPane.showMessageDialog(this, "Failed to save session: " + e.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private void loadSession() {
+        File file = new File(CONFIG_FILE);
+        if (!file.exists()) return;
+
+        try (Scanner scanner = new Scanner(file)) {
+            while (scanner.hasNextLine()) {
+                String[] parts = scanner.nextLine().split(",");
+                if (parts.length == 2) {
+                    String url = parts[0];
+                    int interval = Integer.parseInt(parts[1]) * 1000;
+                    createWebFrame(url, interval);
+                }
+            }
+        } catch (Exception e) {
+            JOptionPane.showMessageDialog(this, "Failed to load session: " + e.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    public static void main(String[] args) {
+        SwingUtilities.invokeLater(WebsiteMonitor::new);
+    }
+}
